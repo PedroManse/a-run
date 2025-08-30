@@ -1,6 +1,4 @@
-use std::fs::OpenOptions;
 use std::io::{Read, Write};
-use std::path::PathBuf;
 pub mod runner;
 
 #[derive(Debug)]
@@ -8,7 +6,7 @@ pub struct AFile(std::fs::File);
 
 #[derive(Debug)]
 pub enum ActionRequest {
-    Open(PathBuf, OpenOptions),
+    Open(std::path::PathBuf, std::fs::OpenOptions),
     Read(AFile),
     WriteAll(AFile, Vec<u8>),
     Close(AFile),
@@ -37,9 +35,7 @@ impl ActionRequest {
                 Ok(ActionResult::WriteAll(file))
             }
             ActionRequest::Close(_) => Ok(ActionResult::Close),
-            ActionRequest::StopRunner => {
-                panic!("Stop Runner Action")
-            }
+            ActionRequest::StopRunner => panic!("Stop Runner Action"),
         }
     }
 }

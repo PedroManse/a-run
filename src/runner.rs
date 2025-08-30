@@ -31,27 +31,20 @@ impl Runner {
         )
     }
     pub fn run_thread(mut self) -> std::thread::JoinHandle<()> {
-        std::thread::spawn(move || {
-            //let pid = std::thread::current().id();
-            //eprintln!("[AIO#{pid:?}] INIT");
-            loop {
-                if self.execute_one().unwrap() == ControlFlow::Break(()) {
-                    break;
-                }
-            }
-        })
+        std::thread::spawn(
+            move || {
+                while self.execute_one().unwrap() != ControlFlow::Break(()) {}
+            },
+        )
     }
     fn execute_one(&mut self) -> Result<ControlFlow<()>, RunnerError> {
         let msg = self.incoming.recv().map_err(RunnerError::Recv)?;
-        if let ActionRequest::StopRunner = msg {
-            return Ok(ControlFlow::Break(()));
-        }
-
-        //let pid = std::thread::current().id();
-        //eprintln!("[AIO#{pid:?}] RCV {msg:?}");
-
-        let res = msg.execute();
-        self.outgoing.send(res).map_err(RunnerError::Send)?;
-        Ok(ControlFlow::Continue(()))
+        Ok(if let ActionRequest::StopRunner = msg {
+            ControlFlow::Break(())
+        } else {
+            let res = msg.execute();
+            self.outgoing.send(res).map_err(RunnerError::Send)?;
+            ControlFlow::Continue(())
+        })
     }
 }
