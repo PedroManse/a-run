@@ -1,0 +1,22 @@
+name: Rust
+
+on:
+  pull_request:
+    branches: [ "master" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build
+      run: cargo build
+    - name: Format
+      run: cargo fmt --check
+    - name: Lint
+      run: "cargo clippy --all-targets --all-features -- -Dclippy::perf -Dclippy::style -Wclippy::pedantic -Aclippy::unnested_or_patterns -Aclippy::wildcard_imports -Aclippy::enum_glob_use -Aclippy::too_many_lines -Aclippy::match_same_arms -Aclippy::unnecessary_wraps -Aclippy::missing_errors_doc"
+    - name: Test
+      run: cargo test
