@@ -4,13 +4,28 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    main_async(true)
+}
+
+fn main_sync() -> Result<(), Box<dyn std::error::Error>> {
+    for _ in 0..ITER_COUNT {
+        std::fs::OpenOptions::new().read(true).open("ci.sh")?;
+        std::fs::OpenOptions::new().read(true).open("txt")?;
+    }
+    Ok(())
+}
+
+fn main_async(queue_all_first: bool) -> Result<(), Box<dyn std::error::Error>> {
     let (runner, send_aio, recv_aio) = aio_rs::runner::Runner::new();
     let (runner2, send_aio2, recv_aio2) = aio_rs::runner::Runner::new();
     runner.run_thread();
     runner2.run_thread();
 
-    //loop_queue_wait(&send_aio, &recv_aio, &send_aio2, &recv_aio2)?;
-    queue_all_wait_all(&send_aio, &recv_aio, &send_aio2, &recv_aio2)?;
+    if queue_all_first {
+        loop_queue_wait(&send_aio, &recv_aio, &send_aio2, &recv_aio2)?;
+    } else {
+        queue_all_wait_all(&send_aio, &recv_aio, &send_aio2, &recv_aio2)?;
+    }
 
     send_aio.send(ActionRequest::StopRunner)?;
     send_aio2.send(ActionRequest::StopRunner)?;
