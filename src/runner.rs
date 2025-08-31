@@ -1,12 +1,13 @@
+use std::ops::ControlFlow;
 use std::sync::mpsc::{self, Receiver, RecvError, SendError, Sender};
 
 pub struct Runner<Req>
 where
-    Req: ExecuteMessage,
-    <Req as ExecuteMessage>::Res: std::fmt::Debug,
+    Req: ControlExecuteMessage,
+    <Req as ControlExecuteMessage>::Res: std::fmt::Debug,
 {
     incoming: Receiver<Req>,
-    outgoing: Sender<<Req as ExecuteMessage>::Res>,
+    outgoing: Sender<<Req as ControlExecuteMessage>::Res>,
 }
 
 #[derive(Debug)]
@@ -23,13 +24,26 @@ pub trait ExecuteMessage {
     fn execute(self) -> Self::Res;
 }
 
-type Ret<T> = <T as ExecuteMessage>::Res;
+/// Implement ControlExecuteMessage for requests that implement ExecuteMessage.
+/// This should only be used for prototyping
+impl<E: ExecuteMessage> ControlExecuteMessage for E {
+    type Res = <E as ExecuteMessage>::Res;
+    fn execute(self) -> ControlFlow<(), Self::Res> {
+        ControlFlow::Continue(<Self as ExecuteMessage>::execute(self))
+    }
+}
+
+pub trait ControlExecuteMessage {
+    type Res;
+    fn execute(self) -> ControlFlow<(), Self::Res>;
+}
+
+type Ret<T> = <T as ControlExecuteMessage>::Res;
 
 impl<Req> Runner<Req>
 where
-    Req: ExecuteMessage + Send + Sync + 'static,
-    <Req as ExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
-    //Ret: Send + Sync + std::fmt::Debug + 'static + From<<Req as ExecuteMessage>::Res>,
+    Req: ControlExecuteMessage + Send + Sync + 'static,
+    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
 {
     pub fn new() -> (Self, Sender<Req>, Receiver<Ret<Req>>) {
         let (req_send, req_recv) = mpsc::channel();
@@ -44,16 +58,18 @@ where
         )
     }
     pub fn run_thread(mut self) -> std::thread::JoinHandle<()> {
-        std::thread::spawn(move || {
-            loop {
-                self.execute_one().unwrap();
-            }
-        })
+        std::thread::spawn(move || while self.execute_one().unwrap().is_continue() {})
     }
-    fn execute_one(&mut self) -> Result<(), RunnerError<Ret<Req>>> {
+    fn execute_one(&mut self) -> Result<ControlFlow<()>, RunnerError<Ret<Req>>> {
         let msg = self.incoming.recv().map_err(RunnerError::Recv)?;
-        let res: Ret<Req> = msg.execute().into();
-        self.outgoing.send(res).map_err(RunnerError::Send)?;
-        Ok(())
+        let res = msg.execute();
+        Ok(match res {
+            ControlFlow::Continue(m) => {
+                let msg: Ret<Req> = m.into();
+                self.outgoing.send(msg.into()).map_err(RunnerError::Send)?;
+                ControlFlow::Continue(())
+            }
+            ControlFlow::Break(()) => ControlFlow::Break(()),
+        })
     }
 }

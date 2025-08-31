@@ -1,4 +1,4 @@
-use aio_rs::{ActionRequest, ActionResult};
+use a_run::{aio::{ActionRequest, ActionResult}};
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
@@ -16,8 +16,8 @@ fn main_sync() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main_async(queue_all_first: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let (runner, send_aio, recv_aio) = aio_rs::runner::Runner::new();
-    let (runner2, send_aio2, recv_aio2) = aio_rs::runner::Runner::new();
+    let (runner, send_aio, recv_aio) = a_run::runner::Runner::new();
+    let (runner2, send_aio2, recv_aio2) = a_run::runner::Runner::new();
     runner.run_thread();
     runner2.run_thread();
 
