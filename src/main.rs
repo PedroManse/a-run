@@ -1,77 +1,45 @@
-use a_run::{aio::{ActionRequest, ActionResult}};
+use a_run::aio::{ActionRequest, ActionResult};
 use std::fs::OpenOptions;
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, Sender};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    main_async(true)
-}
+    let (send_aio, recv_aio) = a_run::runner::Runner::new();
 
-fn main_sync() -> Result<(), Box<dyn std::error::Error>> {
-    for _ in 0..ITER_COUNT {
-        std::fs::OpenOptions::new().read(true).open("ci.sh")?;
-        std::fs::OpenOptions::new().read(true).open("txt")?;
-    }
-    Ok(())
-}
+    send_aio.send(ActionRequest::Open(
+        PathBuf::from("Cargo.toml"),
+        OpenOptions::new().read(true).to_owned(),
+    ))?;
 
-fn main_async(queue_all_first: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let (runner, send_aio, recv_aio) = a_run::runner::Runner::new();
-    let (runner2, send_aio2, recv_aio2) = a_run::runner::Runner::new();
-    runner.run_thread();
-    runner2.run_thread();
+    let in_file = match recv_aio.recv()?? {
+        ActionResult::Open(f) => f,
+        _ => panic!(),
+    };
 
-    if queue_all_first {
-        loop_queue_wait(&send_aio, &recv_aio, &send_aio2, &recv_aio2)?;
-    } else {
-        queue_all_wait_all(&send_aio, &recv_aio, &send_aio2, &recv_aio2)?;
-    }
+    send_aio.send(ActionRequest::Read(in_file))?;
+    send_aio.send(ActionRequest::Open(
+        PathBuf::from("txt"),
+        OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .to_owned(),
+    ))?;
+
+    let (file, mut content) = match recv_aio.recv()?? {
+        ActionResult::Read(f, c) => (f, c),
+        _ => panic!(),
+    };
+
+    content.reverse();
+
+    let out_file = match recv_aio.recv()?? {
+        ActionResult::Open(f) => f,
+        _ => panic!(),
+    };
+
+    send_aio.send(ActionRequest::WriteAll(out_file, content))?;
+    recv_aio.recv()??;
 
     send_aio.send(ActionRequest::StopRunner)?;
-    send_aio2.send(ActionRequest::StopRunner)?;
-    Ok(())
-}
-
-const ITER_COUNT: i32 = 128;
-
-fn loop_queue_wait(
-    send_aio: &Sender<ActionRequest>,
-    recv_aio: &Receiver<Result<ActionResult, std::io::Error>>,
-    send_aio2: &Sender<ActionRequest>,
-    recv_aio2: &Receiver<Result<ActionResult, std::io::Error>>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    for _ in 0..ITER_COUNT {
-        let opt = OpenOptions::new().read(true).to_owned();
-        let ci_sh = ActionRequest::Open(PathBuf::from("ci.sh"), opt);
-        let opt = OpenOptions::new().read(true).to_owned();
-        let txt = ActionRequest::Open(PathBuf::from("txt"), opt);
-
-        send_aio.send(ci_sh)?;
-        send_aio2.send(txt)?;
-        recv_aio.recv()??;
-        recv_aio2.recv()??;
-    }
-    Ok(())
-}
-
-fn queue_all_wait_all(
-    send_aio: &Sender<ActionRequest>,
-    recv_aio: &Receiver<Result<ActionResult, std::io::Error>>,
-    send_aio2: &Sender<ActionRequest>,
-    recv_aio2: &Receiver<Result<ActionResult, std::io::Error>>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    for _ in 0..ITER_COUNT {
-        let opt = OpenOptions::new().read(true).to_owned();
-        let ci_sh = ActionRequest::Open(PathBuf::from("ci.sh"), opt);
-        let opt = OpenOptions::new().read(true).to_owned();
-        let txt = ActionRequest::Open(PathBuf::from("txt"), opt);
-
-        send_aio.send(ci_sh)?;
-        send_aio2.send(txt)?;
-    }
-    for _ in 0..ITER_COUNT {
-        recv_aio2.recv()??;
-        recv_aio.recv()??;
-    }
     Ok(())
 }
