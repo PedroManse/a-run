@@ -1,4 +1,6 @@
 use std::io::{Read, Write};
+
+use self::runner::ExecuteMessage;
 pub mod runner;
 
 #[derive(Debug)]
@@ -21,8 +23,9 @@ pub enum ActionResult {
     Close,
 }
 
-impl ActionRequest {
-    pub fn execute(self) -> Result<ActionResult, std::io::Error> {
+impl ExecuteMessage for ActionRequest {
+    type Res = Result<ActionResult, std::io::Error>;
+    fn execute(self) -> Self::Res {
         match self {
             ActionRequest::Open(path, opt) => opt.open(path).map(AFile).map(ActionResult::Open),
             ActionRequest::Read(mut file) => {
