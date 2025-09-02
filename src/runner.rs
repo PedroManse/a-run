@@ -46,14 +46,20 @@ where
     <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
 {
     pub fn new() -> (Sender<Req>, Receiver<Ret<Req>>) {
-        let (req_send, req_recv) = mpsc::channel();
         let (res_send, res_recv) = mpsc::channel();
+        let (req_send, req_recv) = mpsc::channel();
+        Self::make_runner(req_recv, res_send);
+        (req_send, res_recv)
+    }
+    pub fn make_runner(
+        req_recv: Receiver<Req>,
+        res_send: Sender<Ret<Req>>,
+    ) {
         Runner {
             incoming: req_recv,
             outgoing: res_send,
         }
         .run_thread();
-        (req_send, res_recv)
     }
     pub fn run_thread(mut self) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || while self.execute_one().unwrap().is_continue() {})

@@ -1,45 +1,58 @@
 use a_run::aio::{ActionRequest, ActionResult};
+use a_run::pool::Pool;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (send_aio, recv_aio) = a_run::runner::Runner::new();
+    let pool: Pool<ActionRequest, 3> = Pool::new();
+    let (send_aio, recv_aio) = pool.start();
+    send_aio.send(ActionRequest::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
+    send_aio.send(ActionRequest::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
+    send_aio.send(ActionRequest::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
+    send_aio.send(ActionRequest::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
+    send_aio.send(ActionRequest::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
+    send_aio.send(ActionRequest::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
+    for r in recv_aio {
+        println!("{r:?}");
+    }
 
-    send_aio.send(ActionRequest::Open(
-        PathBuf::from("Cargo.toml"),
-        OpenOptions::new().read(true).to_owned(),
-    ))?;
+    //let (send_aio, recv_aio) = a_run::runner::Runner::new();
 
-    let in_file = match recv_aio.recv()?? {
-        ActionResult::Open(f) => f,
-        _ => panic!(),
-    };
+    //send_aio.send(ActionRequest::Open(
+    //    PathBuf::from("Cargo.toml"),
+    //    OpenOptions::new().read(true).to_owned(),
+    //))?;
 
-    send_aio.send(ActionRequest::Read(in_file))?;
-    send_aio.send(ActionRequest::Open(
-        PathBuf::from("txt"),
-        OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .to_owned(),
-    ))?;
+    //let in_file = match recv_aio.recv()?? {
+    //    ActionResult::Open(f) => f,
+    //    _ => panic!(),
+    //};
 
-    let (file, mut content) = match recv_aio.recv()?? {
-        ActionResult::Read(f, c) => (f, c),
-        _ => panic!(),
-    };
+    //send_aio.send(ActionRequest::Read(in_file))?;
+    //send_aio.send(ActionRequest::Open(
+    //    PathBuf::from("txt"),
+    //    OpenOptions::new()
+    //        .write(true)
+    //        .create(true)
+    //        .truncate(true)
+    //        .to_owned(),
+    //))?;
 
-    content.reverse();
+    //let (file, mut content) = match recv_aio.recv()?? {
+    //    ActionResult::Read(f, c) => (f, c),
+    //    _ => panic!(),
+    //};
 
-    let out_file = match recv_aio.recv()?? {
-        ActionResult::Open(f) => f,
-        _ => panic!(),
-    };
+    //content.reverse();
 
-    send_aio.send(ActionRequest::WriteAll(out_file, content))?;
-    recv_aio.recv()??;
+    //let out_file = match recv_aio.recv()?? {
+    //    ActionResult::Open(f) => f,
+    //    _ => panic!(),
+    //};
 
-    send_aio.send(ActionRequest::StopRunner)?;
+    //send_aio.send(ActionRequest::WriteAll(out_file, content))?;
+    //recv_aio.recv()??;
+
+    //send_aio.send(ActionRequest::StopRunner)?;
     Ok(())
 }

@@ -1,5 +1,6 @@
 use self::runner::ControlExecuteMessage;
 pub mod runner;
+pub mod pool;
 
 pub mod aio {
     use std::io::{Read, Write};
