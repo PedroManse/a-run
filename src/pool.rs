@@ -4,7 +4,6 @@ use std::ops::ControlFlow;
 use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::{Receiver, RecvError, SendError, Sender, TryRecvError};
 use std::thread::JoinHandle;
-use std::usize;
 
 type Ret<T> = <T as ControlExecuteMessage>::Res;
 #[derive(Debug)]
@@ -295,17 +294,15 @@ where
     where
         S: StopRunner<Req>,
     {
-        let mut runner_id = 0;
-        for runner in self.runners {
+        for (runner_id, runner) in self.runners.into_iter().enumerate() {
             runner.send(Pooled::pack(runner_id, closer.get())).unwrap();
-            runner_id += 1;
             runner._thread.join().unwrap();
         }
     }
 
     fn await_runners<F>(&self, mut f: F)
     where
-        F: FnMut(Ret<Req>) -> (),
+        F: FnMut(Ret<Req>),
     {
         for _ in 0..self
             .balancer

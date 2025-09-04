@@ -1,4 +1,4 @@
-use a_run::aio::{AIOStop, ActionRequest, ActionResult};
+use a_run::aio::{AIOStop, ActionRequest};
 use a_run::pool::Pool;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
@@ -15,6 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for _ in 0..8 {
         pool.send(open_file_request())?;
     }
+    pool.stop_and_close()?.close_capture(&AIOStop);
 
     // take chan, await tasks
     //let p = pool.stop()?.0.close_await(&AIOStop);
