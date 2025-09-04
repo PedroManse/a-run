@@ -6,6 +6,8 @@ use std::sync::mpsc::{Receiver, RecvError, SendError, Sender, TryRecvError};
 use std::thread::JoinHandle;
 
 type Ret<T> = <T as ControlExecuteMessage>::Res;
+type PoolCloseRecvPair<Req, const N: usize> =
+    (PoolCloser<Req, N, ReceiverReturned>, Receiver<Ret<Req>>);
 #[derive(Debug)]
 pub struct Pooled<T>(usize, T);
 
@@ -72,10 +74,10 @@ where
 }
 
 pub trait PoolCloserMarker {}
-pub struct RecieverDropped;
-pub struct RecieverReturned;
-impl PoolCloserMarker for RecieverDropped {}
-impl PoolCloserMarker for RecieverReturned {}
+pub struct ReceiverDropped;
+pub struct ReceiverReturned;
+impl PoolCloserMarker for ReceiverDropped {}
+impl PoolCloserMarker for ReceiverReturned {}
 
 pub struct PoolConDef<Req>
 where
@@ -135,6 +137,7 @@ where
 }
 
 #[derive(Debug)]
+#[must_use]
 pub struct PoolCloser<Req, const N: usize, R>
 where
     Req: ControlExecuteMessage + Send + Sync + 'static,
@@ -234,25 +237,20 @@ where
     }
 
     /// Stop execution of pool and take it's reciever for the remaining tasks
-    pub fn stop(
-        self,
-    ) -> Result<
-        (PoolCloser<Req, N, RecieverReturned>, Receiver<Ret<Req>>),
-        SendError<ControlFlow<(), Req>>,
-    > {
+    pub fn stop(self) -> Result<PoolCloseRecvPair<Req, N>, SendError<ControlFlow<(), Req>>> {
         self.send_req.send(ControlFlow::Break(()))?;
         let closer_def = self.manager_thread.join().unwrap();
-        let closer = PoolCloser::<Req, N, RecieverReturned>::from(closer_def);
+        let closer = PoolCloser::<Req, N, ReceiverReturned>::from(closer_def);
         Ok((closer, self.recv_res))
     }
 
     /// Stop execution of pool and drop the pool's response reciever
     pub fn stop_and_close(
         self,
-    ) -> Result<PoolCloser<Req, N, RecieverDropped>, SendError<ControlFlow<(), Req>>> {
+    ) -> Result<PoolCloser<Req, N, ReceiverDropped>, SendError<ControlFlow<(), Req>>> {
         self.send_req.send(ControlFlow::Break(()))?;
         let closer_def = self.manager_thread.join().unwrap();
-        Ok(PoolCloser::<Req, N, RecieverDropped>::from(closer_def))
+        Ok(PoolCloser::<Req, N, ReceiverDropped>::from(closer_def))
     }
 }
 
@@ -315,9 +313,8 @@ where
             f(response)
         }
     }
-
-    /// Await every executor finish their tasks and capture their responses
-    pub fn close_capture<S>(self, closer: &S) -> Vec<Ret<Req>>
+    #[must_use]
+    fn _close_capture<S>(self, closer: &S) -> Vec<Ret<Req>>
     where
         S: StopRunner<Req>,
     {
@@ -334,7 +331,22 @@ where
     }
 }
 
-impl<Req, const N: usize> PoolCloser<Req, N, RecieverReturned>
+impl<Req, const N: usize> PoolCloser<Req, N, ReceiverDropped>
+where
+    Req: ControlExecuteMessage + Send + Sync + 'static,
+    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
+{
+    /// Await every executor finish their tasks and capture their responses
+    #[must_use]
+    pub fn close_capture<S>(self, closer: &S) -> Vec<Ret<Req>>
+    where
+        S: StopRunner<Req>,
+    {
+        self._close_capture(closer)
+    }
+}
+
+impl<Req, const N: usize> PoolCloser<Req, N, ReceiverReturned>
 where
     Req: ControlExecuteMessage + Send + Sync + 'static,
     <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
@@ -348,6 +360,14 @@ where
             self.user_send_response.send(response).unwrap();
         });
         self.kill(closer);
+    }
+    /// Await every executor finish their tasks and capture their responses
+    #[must_use]
+    pub fn close_capture<S>(self, closer: &S, _: Receiver<Ret<Req>>) -> Vec<Ret<Req>>
+    where
+        S: StopRunner<Req>,
+    {
+        self._close_capture(closer)
     }
 }
 
