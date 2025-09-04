@@ -1,20 +1,16 @@
-use a_run::aio::{ActionRequest, ActionResult};
-use a_run::pool::Pool;
+use a_run::aio::{ActionRequest as IOAc, ActionResult};
+use a_run::pool::{Pool, PoolApi};
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let pool: Pool<ActionRequest, 3> = Pool::new();
-    let (send_aio, recv_aio) = pool.start();
-    send_aio.send(ActionRequest::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
-    send_aio.send(ActionRequest::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
-    send_aio.send(ActionRequest::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
-    send_aio.send(ActionRequest::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
-    send_aio.send(ActionRequest::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
-    send_aio.send(ActionRequest::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
-    for r in recv_aio {
-        println!("{r:?}");
-    }
+    let pool: PoolApi<IOAc, 3> = Pool::new().start();
+    pool.send(IOAc::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
+    pool.send(IOAc::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
+    pool.send(IOAc::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
+    pool.send(IOAc::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
+    pool.send(IOAc::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
+    pool.send(IOAc::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
 
     //let (send_aio, recv_aio) = a_run::runner::Runner::new();
 
