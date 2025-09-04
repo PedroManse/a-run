@@ -1,16 +1,28 @@
-use a_run::aio::{ActionRequest as IOAc, ActionResult};
-use a_run::pool::{Pool, PoolApi};
+use a_run::aio::{AIOStop, ActionRequest, ActionResult};
+use a_run::pool::Pool;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let pool: PoolApi<IOAc, 3> = Pool::new().start();
-    pool.send(IOAc::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
-    pool.send(IOAc::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
-    pool.send(IOAc::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
-    pool.send(IOAc::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
-    pool.send(IOAc::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
-    pool.send(IOAc::Open( PathBuf::from("Cargo.toml"), OpenOptions::new().read(true).to_owned(),))?;
+    let pool = Pool::<_, 3>::new().start();
+    let open_file_request = || {
+        ActionRequest::Open(
+            PathBuf::from("Cargo.toml"),
+            OpenOptions::new().read(true).to_owned(),
+        )
+    };
+
+    for _ in 0..8 {
+        pool.send(open_file_request())?;
+    }
+    let p = ();
+    //pool.stop()?.0.close_await(&AIOStop);
+    //let p = pool.stop()?.0.close_await(&AIOStop);
+    //let p = pool.stop()?.0.close_capture(&AIOStop);
+    // ERROR:
+    let p = pool.stop_and_close()?.close_await(&AIOStop);
+    //let p = pool.stop_and_close()?.close_capture(&AIOStop);
+    println!("{p:?}");
 
     //let (send_aio, recv_aio) = a_run::runner::Runner::new();
 

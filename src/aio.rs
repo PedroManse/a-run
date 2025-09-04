@@ -1,5 +1,7 @@
 use std::io::{Read, Write};
 use std::ops::ControlFlow;
+
+use crate::runner::{StopRunner, ControlExecuteMessage};
 #[derive(Debug)]
 pub struct AFile(std::fs::File);
 
@@ -10,6 +12,13 @@ pub enum ActionRequest {
     WriteAll(AFile, Vec<u8>),
     Close(AFile),
     StopRunner,
+}
+
+pub struct AIOStop;
+impl StopRunner<ActionRequest> for AIOStop {
+    fn get(&self) -> ActionRequest {
+        ActionRequest::StopRunner
+    }
 }
 
 #[derive(Debug)]
@@ -39,7 +48,7 @@ impl ActionRequest {
     }
 }
 
-impl crate::runner::ControlExecuteMessage for ActionRequest {
+impl ControlExecuteMessage for ActionRequest {
     type Res = Result<ActionResult, std::io::Error>;
     fn execute(self) -> ControlFlow<(), Self::Res> {
         match self {
@@ -48,3 +57,4 @@ impl crate::runner::ControlExecuteMessage for ActionRequest {
         }
     }
 }
+

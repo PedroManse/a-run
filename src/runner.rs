@@ -24,6 +24,15 @@ pub trait ControlExecuteMessage {
     fn execute(self) -> ControlFlow<(), Self::Res>;
 }
 
+/// Makes a request that a runner's [`ControlExecuteMessage`] can identify and return a [`ControlFlow::Break`]
+pub trait StopRunner<Req>
+where
+    Req: ControlExecuteMessage,
+    <Req as ControlExecuteMessage>::Res: std::fmt::Debug,
+{
+    fn get(&self) -> Req;
+}
+
 type Ret<T> = <T as ControlExecuteMessage>::Res;
 
 impl<Req> Runner<Req>
