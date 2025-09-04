@@ -15,14 +15,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for _ in 0..8 {
         pool.send(open_file_request())?;
     }
-    let p = ();
-    //pool.stop()?.0.close_await(&AIOStop);
+
+    // take chan, await tasks
     //let p = pool.stop()?.0.close_await(&AIOStop);
+    // take chan, capture tasks
     //let p = pool.stop()?.0.close_capture(&AIOStop);
-    // ERROR:
-    let p = pool.stop_and_close()?.close_await(&AIOStop);
+    // drop chan, await tasks (compile time error)
+    //let p = pool.stop_and_close()?.close_await(&AIOStop);
+    // drop chan, capture tasks
     //let p = pool.stop_and_close()?.close_capture(&AIOStop);
-    println!("{p:?}");
 
     //let (send_aio, recv_aio) = a_run::runner::Runner::new();
 

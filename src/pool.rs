@@ -1,4 +1,5 @@
 use crate::runner::{ControlExecuteMessage, Runner, StopRunner};
+use std::marker::PhantomData;
 use std::ops::ControlFlow;
 use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::{Receiver, RecvError, SendError, Sender, TryRecvError};
@@ -10,10 +11,10 @@ type Ret<T> = <T as ControlExecuteMessage>::Res;
 pub struct Pooled<T>(usize, T);
 
 impl<T> Pooled<T> {
-    fn wrap(id: usize, v: T) -> Self {
+    fn pack(id: usize, v: T) -> Self {
         Self(id, v)
     }
-    fn unwrap(self) -> (usize, T) {
+    fn unpack(self) -> (usize, T) {
         (self.0, self.1)
     }
 }
@@ -27,7 +28,7 @@ where
         match self.1.execute() {
             std::ops::ControlFlow::Break(()) => std::ops::ControlFlow::Break(()),
             std::ops::ControlFlow::Continue(c) => {
-                std::ops::ControlFlow::Continue(Pooled::wrap(self.0, c))
+                std::ops::ControlFlow::Continue(Pooled::pack(self.0, c))
             }
         }
     }
@@ -70,6 +71,12 @@ where
     pooled_request_channel: [PoolConDef<Req>; CCOUNT],
     pooled_response_channel: Chan<Pooled<Ret<Req>>>,
 }
+
+pub trait PoolCloserMarker {}
+pub struct RecieverDropped;
+pub struct RecieverReturned;
+impl PoolCloserMarker for RecieverDropped {}
+impl PoolCloserMarker for RecieverReturned {}
 
 pub struct PoolConDef<Req>
 where
@@ -125,19 +132,21 @@ where
 {
     send_req: Sender<ControlFlow<(), Req>>,
     recv_res: Receiver<Ret<Req>>,
-    manager_thread: JoinHandle<PoolCloser<Req, N>>,
+    manager_thread: JoinHandle<PoolCloserDef<Req, N>>,
 }
 
 #[derive(Debug)]
-pub struct PoolCloser<Req, const N: usize>
+pub struct PoolCloser<Req, const N: usize, R>
 where
     Req: ControlExecuteMessage + Send + Sync + 'static,
     <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
+    R: PoolCloserMarker,
 {
     recv_pooled_response: Receiver<Pooled<Ret<Req>>>,
     runners: [PoolCon<Req>; N],
     balancer: PoolBalancer<N>,
     user_send_response: Sender<Ret<Req>>,
+    _mark: PhantomData<R>,
 }
 
 impl<Req, const CCOUNT: usize> Pool<Req, CCOUNT>
@@ -177,12 +186,12 @@ where
                     }
                     Ok(ControlFlow::Continue(req)) => {
                         let runner_ref = pb.send();
-                        let pooled_req = Pooled::wrap(runner_ref.id, req);
+                        let pooled_req = Pooled::pack(runner_ref.id, req);
                         runners[runner_ref.id].send(pooled_req).unwrap();
                         continue;
                     }
                     Ok(ControlFlow::Break(())) => {
-                        return PoolCloser {
+                        return PoolCloserDef {
                             balancer: pb,
                             recv_pooled_response,
                             runners,
@@ -196,7 +205,7 @@ where
                         panic!("Channel closed")
                     }
                     Ok(pooled_response) => {
-                        let (runner_id, response) = pooled_response.unwrap();
+                        let (runner_id, response) = pooled_response.unpack();
                         pb.done(runner_id);
                         user_send_response.send(response).unwrap();
                     }
@@ -225,22 +234,62 @@ where
         self.recv_res.recv()
     }
 
+    /// Stop execution of pool and take it's reciever for the remaining tasks
     pub fn stop(
         self,
-    ) -> Result<(PoolCloser<Req, N>, Receiver<Ret<Req>>), SendError<ControlFlow<(), Req>>> {
+    ) -> Result<
+        (PoolCloser<Req, N, RecieverReturned>, Receiver<Ret<Req>>),
+        SendError<ControlFlow<(), Req>>,
+    > {
         self.send_req.send(ControlFlow::Break(()))?;
-        Ok((self.manager_thread.join().unwrap(), self.recv_res))
+        let closer_def = self.manager_thread.join().unwrap();
+        let closer = PoolCloser::<Req, N, RecieverReturned>::from(closer_def);
+        Ok((closer, self.recv_res))
     }
-    pub fn stop_and_close(self) -> Result<PoolCloser<Req, N>, SendError<ControlFlow<(), Req>>> {
+
+    /// Stop execution of pool and drop the pool's response reciever
+    pub fn stop_and_close(
+        self,
+    ) -> Result<PoolCloser<Req, N, RecieverDropped>, SendError<ControlFlow<(), Req>>> {
         self.send_req.send(ControlFlow::Break(()))?;
-        Ok(self.manager_thread.join().unwrap())
+        let closer_def = self.manager_thread.join().unwrap();
+        Ok(PoolCloser::<Req, N, RecieverDropped>::from(closer_def))
     }
 }
 
-impl<Req, const N: usize> PoolCloser<Req, N>
+pub struct PoolCloserDef<Req, const N: usize>
 where
     Req: ControlExecuteMessage + Send + Sync + 'static,
     <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
+{
+    recv_pooled_response: Receiver<Pooled<Ret<Req>>>,
+    runners: [PoolCon<Req>; N],
+    balancer: PoolBalancer<N>,
+    user_send_response: Sender<Ret<Req>>,
+}
+
+impl<Req, const N: usize, R> From<PoolCloserDef<Req, N>> for PoolCloser<Req, N, R>
+where
+    Req: ControlExecuteMessage + Send + Sync + 'static,
+    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
+    R: PoolCloserMarker,
+{
+    fn from(value: PoolCloserDef<Req, N>) -> Self {
+        Self {
+            recv_pooled_response: value.recv_pooled_response,
+            runners: value.runners,
+            balancer: value.balancer,
+            user_send_response: value.user_send_response,
+            _mark: PhantomData,
+        }
+    }
+}
+
+impl<Req, const N: usize, R> PoolCloser<Req, N, R>
+where
+    Req: ControlExecuteMessage + Send + Sync + 'static,
+    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
+    R: PoolCloserMarker,
 {
     fn kill<S>(self, closer: &S)
     where
@@ -248,7 +297,7 @@ where
     {
         let mut runner_id = 0;
         for runner in self.runners {
-            runner.send(Pooled::wrap(runner_id, closer.get())).unwrap();
+            runner.send(Pooled::pack(runner_id, closer.get())).unwrap();
             runner_id += 1;
             runner._thread.join().unwrap();
         }
@@ -264,7 +313,7 @@ where
             .load(std::sync::atomic::Ordering::Relaxed)
         {
             let pooled_response = self.recv_pooled_response.recv().unwrap();
-            let (runner_id, response) = pooled_response.unwrap();
+            let (runner_id, response) = pooled_response.unpack();
             self.balancer.done(runner_id);
             f(response)
         }
@@ -286,7 +335,13 @@ where
         self.kill(closer);
         late
     }
+}
 
+impl<Req, const N: usize> PoolCloser<Req, N, RecieverReturned>
+where
+    Req: ControlExecuteMessage + Send + Sync + 'static,
+    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
+{
     /// Await every executor finish their tasks and send their responses
     pub fn close_await<S>(self, closer: &S)
     where
