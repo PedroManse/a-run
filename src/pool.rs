@@ -5,9 +5,15 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::{Receiver, RecvError, SendError, Sender, TryRecvError};
 use std::thread::JoinHandle;
 
+mod api;
+mod balancer;
+mod close;
+pub use api::*;
+use balancer::*;
+pub use close::*;
+
 type Ret<T> = <T as ControlExecuteMessage>::Res;
-type PoolCloseRecvPair<Req, const N: usize> =
-    (PoolCloser<Req, N, ReceiverReturned>, Receiver<Ret<Req>>);
+
 #[derive(Debug)]
 pub struct Pooled<T>(usize, T);
 
@@ -47,60 +53,26 @@ impl<T> Chan<T> {
     }
 }
 
-impl<Req, const CCOUNT: usize> Default for Pool<Req, CCOUNT>
-where
-    Req: ControlExecuteMessage + Send + Sync + 'static,
-    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
-{
+impl<T> Default for Chan<T> {
     fn default() -> Self {
-        Self {
-            user_request_channel: Chan::new(),
-            user_response_channel: Chan::new(),
-            pooled_request_channel: [(); CCOUNT].map(|_| PoolConDef::new()),
-            pooled_response_channel: Chan::new(),
-        }
+        Chan::new()
     }
 }
 
-pub struct Pool<Req: ControlExecuteMessage, const CCOUNT: usize>
-where
-    Req: ControlExecuteMessage + Send + Sync + 'static,
-    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
-{
-    user_request_channel: Chan<ControlFlow<(), Req>>,
-    user_response_channel: Chan<Ret<Req>>,
-    pooled_request_channel: [PoolConDef<Req>; CCOUNT],
-    pooled_response_channel: Chan<Pooled<Ret<Req>>>,
-}
-
-pub trait PoolCloserMarker {}
-pub struct ReceiverDropped;
-pub struct ReceiverReturned;
-impl PoolCloserMarker for ReceiverDropped {}
-impl PoolCloserMarker for ReceiverReturned {}
-
-pub struct PoolConDef<Req>
-where
-    Req: ControlExecuteMessage + Send + Sync + 'static,
-    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
-{
+pub struct PoolConDef<Req> {
     pooled_chan: Chan<Pooled<Req>>,
 }
 
 #[derive(Debug)]
-pub struct PoolCon<Req>
-where
-    Req: ControlExecuteMessage + Send + Sync + 'static,
-    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
-{
+pub struct PoolCon<Req> {
     _thread: std::thread::JoinHandle<()>,
     send_pooled_req: Sender<Pooled<Req>>,
 }
 
 impl<Req> PoolConDef<Req>
 where
-    Req: ControlExecuteMessage + Send + Sync + 'static,
-    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
+    Req: ControlExecuteMessage,
+    Ret<Req>: std::fmt::Debug + Send + 'static,
 {
     fn new() -> Self {
         Self {
@@ -116,45 +88,41 @@ where
     }
 }
 
-impl<Req> PoolCon<Req>
-where
-    Req: ControlExecuteMessage + Send + Sync + 'static,
-    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
-{
+impl<Req> PoolCon<Req> {
     fn send(&self, req: Pooled<Req>) -> Result<(), SendError<Pooled<Req>>> {
         self.send_pooled_req.send(req)
     }
 }
 
-pub struct PoolApi<Req, const N: usize>
+pub struct Pool<Req, const CCOUNT: usize>
 where
-    Req: ControlExecuteMessage + Send + Sync + 'static,
-    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
+    Req: ControlExecuteMessage,
 {
-    send_req: Sender<ControlFlow<(), Req>>,
-    recv_res: Receiver<Ret<Req>>,
-    manager_thread: JoinHandle<PoolCloserDef<Req, N>>,
+    user_request_channel: Chan<ControlFlow<(), Req>>,
+    user_response_channel: Chan<Ret<Req>>,
+    pooled_request_channel: [PoolConDef<Req>; CCOUNT],
+    pooled_response_channel: Chan<Pooled<Ret<Req>>>,
 }
 
-#[derive(Debug)]
-#[must_use]
-pub struct PoolCloser<Req, const N: usize, R>
+impl<Req, const CCOUNT: usize> Default for Pool<Req, CCOUNT>
 where
-    Req: ControlExecuteMessage + Send + Sync + 'static,
-    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
-    R: PoolCloserMarker,
+    Req: ControlExecuteMessage,
+    Ret<Req>: std::fmt::Debug + Send + 'static,
 {
-    recv_pooled_response: Receiver<Pooled<Ret<Req>>>,
-    runners: [PoolCon<Req>; N],
-    balancer: PoolBalancer<N>,
-    user_send_response: Sender<Ret<Req>>,
-    _mark: PhantomData<R>,
+    fn default() -> Self {
+        Self {
+            user_request_channel: Chan::new(),
+            user_response_channel: Chan::new(),
+            pooled_request_channel: [(); CCOUNT].map(|_| PoolConDef::new()),
+            pooled_response_channel: Chan::new(),
+        }
+    }
 }
 
 impl<Req, const CCOUNT: usize> Pool<Req, CCOUNT>
 where
-    Req: ControlExecuteMessage + Send + Sync + 'static,
-    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
+    Req: ControlExecuteMessage,
+    Ret<Req>: std::fmt::Debug + Send + 'static,
 {
     pub fn new() -> Self {
         Self::default()
@@ -193,7 +161,7 @@ where
                         continue;
                     }
                     Ok(ControlFlow::Break(())) => {
-                        return PoolCloserDef {
+                        return close::PoolCloserDef {
                             balancer: pb,
                             recv_pooled_response,
                             runners,
@@ -221,221 +189,5 @@ where
             recv_res: user_recv_response,
             manager_thread,
         }
-    }
-}
-
-impl<Req, const N: usize> PoolApi<Req, N>
-where
-    Req: ControlExecuteMessage + Send + Sync + 'static,
-    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
-{
-    pub fn send(&self, req: Req) -> Result<(), SendError<ControlFlow<(), Req>>> {
-        self.send_req.send(ControlFlow::Continue(req))
-    }
-    pub fn recv(&self) -> Result<Ret<Req>, RecvError> {
-        self.recv_res.recv()
-    }
-
-    /// Stop execution of pool and take it's reciever for the remaining tasks
-    pub fn stop(self) -> Result<PoolCloseRecvPair<Req, N>, SendError<ControlFlow<(), Req>>> {
-        self.send_req.send(ControlFlow::Break(()))?;
-        let closer_def = self.manager_thread.join().unwrap();
-        let closer = PoolCloser::<Req, N, ReceiverReturned>::from(closer_def);
-        Ok((closer, self.recv_res))
-    }
-
-    /// Stop execution of pool and drop the pool's response reciever
-    pub fn stop_and_close(
-        self,
-    ) -> Result<PoolCloser<Req, N, ReceiverDropped>, SendError<ControlFlow<(), Req>>> {
-        self.send_req.send(ControlFlow::Break(()))?;
-        let closer_def = self.manager_thread.join().unwrap();
-        Ok(PoolCloser::<Req, N, ReceiverDropped>::from(closer_def))
-    }
-}
-
-pub struct PoolCloserDef<Req, const N: usize>
-where
-    Req: ControlExecuteMessage + Send + Sync + 'static,
-    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
-{
-    recv_pooled_response: Receiver<Pooled<Ret<Req>>>,
-    runners: [PoolCon<Req>; N],
-    balancer: PoolBalancer<N>,
-    user_send_response: Sender<Ret<Req>>,
-}
-
-impl<Req, const N: usize, R> From<PoolCloserDef<Req, N>> for PoolCloser<Req, N, R>
-where
-    Req: ControlExecuteMessage + Send + Sync + 'static,
-    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
-    R: PoolCloserMarker,
-{
-    fn from(value: PoolCloserDef<Req, N>) -> Self {
-        Self {
-            recv_pooled_response: value.recv_pooled_response,
-            runners: value.runners,
-            balancer: value.balancer,
-            user_send_response: value.user_send_response,
-            _mark: PhantomData,
-        }
-    }
-}
-
-impl<Req, const N: usize, R> PoolCloser<Req, N, R>
-where
-    Req: ControlExecuteMessage + Send + Sync + 'static,
-    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
-    R: PoolCloserMarker,
-{
-    fn kill<S>(self, closer: &S)
-    where
-        S: StopRunner<Req>,
-    {
-        for (runner_id, runner) in self.runners.into_iter().enumerate() {
-            runner.send(Pooled::pack(runner_id, closer.get())).unwrap();
-            runner._thread.join().unwrap();
-        }
-    }
-
-    fn await_runners<F>(&self, mut f: F)
-    where
-        F: FnMut(Ret<Req>),
-    {
-        for _ in 0..self
-            .balancer
-            .total
-            .load(std::sync::atomic::Ordering::Relaxed)
-        {
-            let pooled_response = self.recv_pooled_response.recv().unwrap();
-            let (runner_id, response) = pooled_response.unpack();
-            self.balancer.done(runner_id);
-            f(response)
-        }
-    }
-    #[must_use]
-    fn _close_capture<S>(self, closer: &S) -> Vec<Ret<Req>>
-    where
-        S: StopRunner<Req>,
-    {
-        let mut late = Vec::with_capacity(
-            self.balancer
-                .total
-                .load(std::sync::atomic::Ordering::Relaxed),
-        );
-        self.await_runners(|response| {
-            late.push(response);
-        });
-        self.kill(closer);
-        late
-    }
-}
-
-impl<Req, const N: usize> PoolCloser<Req, N, ReceiverDropped>
-where
-    Req: ControlExecuteMessage + Send + Sync + 'static,
-    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
-{
-    /// Await every executor finish their tasks and capture their responses
-    #[must_use]
-    pub fn close_capture<S>(self, closer: &S) -> Vec<Ret<Req>>
-    where
-        S: StopRunner<Req>,
-    {
-        self._close_capture(closer)
-    }
-}
-
-impl<Req, const N: usize> PoolCloser<Req, N, ReceiverReturned>
-where
-    Req: ControlExecuteMessage + Send + Sync + 'static,
-    <Req as ControlExecuteMessage>::Res: std::fmt::Debug + Send + 'static,
-{
-    /// Await every executor finish their tasks and send their responses
-    pub fn close_await<S>(self, closer: &S)
-    where
-        S: StopRunner<Req>,
-    {
-        self.await_runners(|response| {
-            self.user_send_response.send(response).unwrap();
-        });
-        self.kill(closer);
-    }
-    /// Await every executor finish their tasks and capture their responses
-    #[must_use]
-    pub fn close_capture<S>(self, closer: &S, _: Receiver<Ret<Req>>) -> Vec<Ret<Req>>
-    where
-        S: StopRunner<Req>,
-    {
-        self._close_capture(closer)
-    }
-}
-
-#[derive(Default, Debug)]
-struct PoolAnaliticRunner {
-    running: AtomicUsize,
-}
-
-struct PoolRunnerRef {
-    id: usize,
-    running: usize,
-}
-
-#[derive(Debug)]
-struct PoolBalancer<const N: usize> {
-    total: AtomicUsize,
-    runners: [PoolAnaliticRunner; N],
-}
-
-impl<const N: usize> PoolBalancer<N> {
-    fn get_by_id(&self, id: usize) -> &PoolAnaliticRunner {
-        &self.runners[id]
-    }
-    fn new() -> Self {
-        PoolBalancer {
-            total: AtomicUsize::default(),
-            runners: [(); N].map(|_| PoolAnaliticRunner::default()),
-        }
-    }
-    #[must_use]
-    fn send(&self) -> PoolRunnerRef {
-        let mut min = PoolRunnerRef {
-            id: 0,
-            running: usize::MAX,
-        };
-        for id in 0..N {
-            let running = self
-                .get_by_id(id)
-                .running
-                .load(std::sync::atomic::Ordering::SeqCst);
-            if running == 0 {
-                //eprintln!("[ACQ] Found idle runner #{id} (0 -> 1)");
-                self.get_by_id(id)
-                    .running
-                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                self.total
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                return PoolRunnerRef { id, running };
-            } else if running < min.running {
-                min = PoolRunnerRef { id, running };
-            }
-        }
-        let _old = self
-            .get_by_id(min.id)
-            .running
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.total
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        //eprintln!("[ACQ] Best runner #{} ({} -> {})", min.id, _old, _old + 1);
-        min
-    }
-    fn done(&self, id: usize) {
-        let _old = self
-            .get_by_id(id)
-            .running
-            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-        self.total
-            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-        //eprintln!("[REL] runner #{} ({} -> {})", id, _old, _old - 1);
     }
 }
