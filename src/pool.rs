@@ -1,4 +1,5 @@
-use crate::runner::{ControlExecuteMessage, Runner, StopRunner};
+use crate::runner::{ControlExecuteMessage, StopRunner};
+use crate::queue::Runner;
 use std::marker::PhantomData;
 use std::ops::ControlFlow;
 use std::sync::atomic::AtomicUsize;
